@@ -1,6 +1,18 @@
 [package]
 name = "chain-gateway"
 version = "0.1.0"
-edition = "2021"
+edition = "2021"  # Correct edition
+build = "build.rs"
 
 [dependencies]
+tonic = "0.11"
+prost = "0.12"
+prost-types = "0.12"
+tokio = { version = "1.33", features = ["full"] }
+solana-client = "1.16"
+thiserror = "1.0.40"
+tracing = "0.1.39"
+dotenv = "0.15.0"
+
+[build-dependencies]
+tonic-build = "0.11"

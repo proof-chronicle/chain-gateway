@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package chain_gateway;
+
+// Reusable record for content entries
+message ContentRecord {
+    string uid = 1;                                // Unique identifier
+    string created_at = 2;      // Creation timestamp
+    string hash = 3;                               // Content hash
+    string url = 4;                                // Original URL
+}
+
+// Request to store a content record
+message StoreRequest {
+    ContentRecord record = 1;
+}
+
+// Response after storing a record
+message StoreResponse {
+    bool success = 1;
+    string transaction_id = 2;  // On-chain transaction ID
+}
+
+// Request to retrieve a content record by UID
+message RetrieveRequest {
+    string transaction_id = 1;
+}
+
+// Response containing the requested content record
+message RetrieveResponse {
+    ContentRecord record = 1;
+}
+
+service ChainGateway {
+    // Store a new content record on-chain
+    rpc Store(StoreRequest) returns (StoreResponse);
+
+    // Retrieve an existing content record by its transaction_id
+    rpc Retrieve(RetrieveRequest) returns (RetrieveResponse);
+}
+
