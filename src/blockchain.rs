@@ -7,16 +7,14 @@ pub type BlockchainResult<T> = Result<T, Box<dyn Error + Send + Sync>>;
 #[derive(Debug, Clone)]
 pub struct TransactionResult {
     pub transaction_id: String,
-    pub block_height: Option<u64>,
-    pub confirmation_time: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
-pub struct ChainConfig {
-    pub network_url: String,
-    pub program_id: Option<String>,
-    pub private_key_path: Option<String>,
-    pub chain_type: ChainType,
+pub struct SolanaConfig {
+    pub rpc_url: String,
+    pub program_id: String,
+    pub keypair_path: String,
+    pub proof_account_keypair_path: String,
 }
 
 #[derive(Debug, Clone)]

@@ -14,7 +14,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use crate::blockchain::{
-    BlockchainProvider, BlockchainResult, ChainConfig, NetworkInfo, TransactionResult,
+    BlockchainProvider, BlockchainResult, SolanaConfig, TransactionResult,
 };
 use crate::proto::ContentRecord;
 
@@ -38,26 +38,22 @@ pub struct SolanaProvider {
     client: RpcClient,
     program_id: Pubkey,
     payer: Keypair,
-    config: ChainConfig,
+    config: SolanaConfig,
 }
 
 impl SolanaProvider {
-    pub fn new(config: ChainConfig) -> BlockchainResult<Self> {
+    pub fn new(config: SolanaConfig) -> BlockchainResult<Self> {
         let client = RpcClient::new_with_commitment(
-            config.network_url.clone(),
+            config.rpc_url.clone(),
             CommitmentConfig::confirmed(),
         );
 
-        let program_id = Pubkey::from_str(
-            config
-                .program_id
-                .as_ref()
-                .ok_or("Program ID is required for Solana provider")?,
-        )?;
-        
+        let program_id = Pubkey::from_str(&config.program_id)?;
         println!("🔗 Using program ID: {}", program_id);
 
-        let payer = Self::load_keypair(&config)?;
+        println!("🔑 Loading payer keypair from: {}", config.keypair_path);
+        let payer = Self::load_keypair(&config.keypair_path)?;
+        println!("🔑 Payer public key: {}", payer.pubkey());
 
         Ok(Self {
             client,
@@ -67,38 +63,23 @@ impl SolanaProvider {
         })
     }
 
-    fn load_keypair(config: &ChainConfig) -> BlockchainResult<Keypair> {
-        if let Some(keypair_path) = &config.private_key_path {
-            let path = Path::new(keypair_path);
-            if path.exists() {
-                match std::fs::read_to_string(path) {
-                    Ok(keypair_json) => {
-                        match serde_json::from_str::<Vec<u8>>(&keypair_json) {
-                            Ok(keypair_bytes) => {
-                                match Keypair::from_bytes(&keypair_bytes) {
-                                    Ok(keypair) => {
-                                        println!("🔑 Loaded existing keypair: {}", keypair.pubkey());
-                                        return Ok(keypair);
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Failed to parse keypair bytes: {}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Failed to parse keypair JSON: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to read keypair file: {}", e);
-                    }
-                }
-            }
+    fn load_keypair(keypair_path: &str) -> BlockchainResult<Keypair> {
+        let path = Path::new(keypair_path);
+        if !path.exists() {
+            return Err(format!("Keypair file not found at: {}", keypair_path).into());
         }
 
-        println!("🔑 Generating new keypair");
-        Ok(Keypair::new())
+        let keypair_json = std::fs::read_to_string(path)
+            .map_err(|e| format!("Failed to read keypair file: {}", e))?;
+
+        let keypair_bytes = serde_json::from_str::<Vec<u8>>(&keypair_json)
+            .map_err(|e| format!("Failed to parse keypair JSON: {}", e))?;
+
+        let keypair = Keypair::from_bytes(&keypair_bytes)
+            .map_err(|e| format!("Failed to parse keypair bytes: {}", e))?;
+
+        println!("🔑 Loaded existing keypair: {}", keypair.pubkey());
+        Ok(keypair)
     }
 
     async fn wait_for_connection(&self) -> BlockchainResult<()> {
@@ -124,9 +105,16 @@ impl SolanaProvider {
         // Wait a bit to ensure airdrop is confirmed
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Generate a new keypair for the proof account
+        // Generate a unique keypair for this proof record
         let proof_account = Keypair::new();
-        println!("🔑 Generated proof account: {}", proof_account.pubkey());
+        
+        // Verify they're different
+        if proof_account.pubkey() == self.program_id {
+            return Err("ERROR: Generated proof account matches program ID!".into());
+        }
+        if proof_account.pubkey() == self.payer.pubkey() {  
+            return Err("ERROR: Generated proof account matches payer!".into());
+        }
 
         // Create the instruction data
         let instruction_data = ProofInstruction::StoreProof {
@@ -137,41 +125,53 @@ impl SolanaProvider {
 
         // Serialize the instruction using Borsh
         let data = instruction_data.try_to_vec()?;
-        
-        // Debug: Print detailed instruction data information
-        println!("🔍 Instruction data size: {} bytes", data.len());
-        println!("🔍 Instruction data (first 32 bytes): {:?}", &data[..data.len().min(32)]);
-        println!("🔍 Full instruction data: {:?}", data);
-        println!("🔍 Variant tag (first byte): {:?}", data.first());
-        println!("🔍 StoreProof params:");
-        println!("   URL: {}", record.url);
-        println!("   Hash: {}", record.content_hash);
-        println!("   Length: {}", record.content_length);
 
-        // Create instruction with the correct accounts
-        let instruction = Instruction::new_with_bytes(
+        // Calculate space needed for the account
+        let space = data.len() as u64;
+        let rent = self.client.get_minimum_balance_for_rent_exemption(space as usize)?;
+
+        // Create account instruction
+        let create_account_ix = solana_sdk::system_instruction::create_account(
+            &self.payer.pubkey(),
+            &proof_account.pubkey(),
+            rent,
+            space,
+            &self.program_id,
+        );
+        println!("🏗️  Created create_account instruction");
+        println!("   From: {} (payer)", self.payer.pubkey());
+        println!("   To: {} (new account)", proof_account.pubkey());
+        println!("   Owner: {} (program)", self.program_id);
+        println!("   Lamports: {}", rent);
+        println!("   Space: {}", space);
+
+        // Store proof instruction
+        let account_metas = vec![
+            AccountMeta::new(self.payer.pubkey(), true),     // Payer (signer)
+            AccountMeta::new(proof_account.pubkey(), true), // Proof account (writable, signer)
+            AccountMeta::new_readonly(system_program::ID, false), // System program
+        ];
+        
+        let store_proof_ix = Instruction::new_with_bytes(
             self.program_id,
             &data,
-            vec![
-                AccountMeta::new(self.payer.pubkey(), true),     // Payer (signer)
-                AccountMeta::new(proof_account.pubkey(), true), // Proof account (writable + signer)
-                AccountMeta::new_readonly(system_program::ID, false), // System program
-            ],
+            account_metas,
         );
 
         // Get recent blockhash
         let recent_blockhash = self.client.get_latest_blockhash()?;
-        println!("🔗 Recent blockhash: {}", recent_blockhash);
 
-        // Create transaction with both signers
+        // Create transaction with both instructions
+        let instructions = [create_account_ix, store_proof_ix];
+        let signers = [&self.payer, &proof_account];
+        
         let transaction = Transaction::new_signed_with_payer(
-            &[instruction],
+            &instructions,
             Some(&self.payer.pubkey()),
-            &[&self.payer, &proof_account], // Both payer and proof account need to sign
+            &signers,
             recent_blockhash,
         );
 
-        println!("📝 Sending transaction...");
         // Send transaction with confirmation
         let signature = self
             .client
@@ -184,8 +184,6 @@ impl SolanaProvider {
 
         Ok(TransactionResult {
             transaction_id: signature.to_string(),
-            block_height: None, // Could fetch this if needed
-            confirmation_time: None,
         })
     }
 }
