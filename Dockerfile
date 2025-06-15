@@ -1,5 +1,5 @@
 # Build stage unchanged
-FROM rust:1.86-slim as builder
+FROM rust:1.86-slim AS builder
 WORKDIR /app
 COPY . .
 RUN apt-get update \

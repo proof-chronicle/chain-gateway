@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use borsh::BorshSerialize;
+use borsh::{BorshSerialize, BorshDeserialize};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
@@ -18,19 +18,19 @@ use crate::blockchain::{
 };
 use crate::proto::ContentRecord;
 
-#[derive(BorshSerialize)]
+#[derive(BorshSerialize, BorshDeserialize, Debug)]
 pub enum ProofInstruction {
     StoreProof {
         url: String,
-        hash: String,
-        created_at: String,
+        content_hash: String,
+        content_length: u64,
     },
-    GetProof,
 }
 
 impl ProofInstruction {
     pub fn try_to_vec(&self) -> Result<Vec<u8>, std::io::Error> {
-        borsh::to_vec(self).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+        borsh::to_vec(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
     }
 }
 
@@ -54,6 +54,8 @@ impl SolanaProvider {
                 .as_ref()
                 .ok_or("Program ID is required for Solana provider")?,
         )?;
+        
+        println!("🔗 Using program ID: {}", program_id);
 
         let payer = Self::load_keypair(&config)?;
 
@@ -124,16 +126,27 @@ impl SolanaProvider {
 
         // Generate a new keypair for the proof account
         let proof_account = Keypair::new();
+        println!("🔑 Generated proof account: {}", proof_account.pubkey());
 
         // Create the instruction data
         let instruction_data = ProofInstruction::StoreProof {
             url: record.url.clone(),
-            hash: record.hash.clone(),
-            created_at: record.created_at.clone(),
+            content_hash: record.content_hash.clone(),
+            content_length: record.content_length,
         };
 
         // Serialize the instruction using Borsh
         let data = instruction_data.try_to_vec()?;
+        
+        // Debug: Print detailed instruction data information
+        println!("🔍 Instruction data size: {} bytes", data.len());
+        println!("🔍 Instruction data (first 32 bytes): {:?}", &data[..data.len().min(32)]);
+        println!("🔍 Full instruction data: {:?}", data);
+        println!("🔍 Variant tag (first byte): {:?}", data.first());
+        println!("🔍 StoreProof params:");
+        println!("   URL: {}", record.url);
+        println!("   Hash: {}", record.content_hash);
+        println!("   Length: {}", record.content_length);
 
         // Create instruction with the correct accounts
         let instruction = Instruction::new_with_bytes(
@@ -148,6 +161,7 @@ impl SolanaProvider {
 
         // Get recent blockhash
         let recent_blockhash = self.client.get_latest_blockhash()?;
+        println!("🔗 Recent blockhash: {}", recent_blockhash);
 
         // Create transaction with both signers
         let transaction = Transaction::new_signed_with_payer(
@@ -157,49 +171,21 @@ impl SolanaProvider {
             recent_blockhash,
         );
 
+        println!("📝 Sending transaction...");
         // Send transaction with confirmation
         let signature = self
             .client
             .send_and_confirm_transaction_with_spinner(&transaction)?;
 
-        println!("✅ Solana transaction successful! Signature: {}", signature);
+        println!("✅ Solana transaction successful!");
+        println!("📄 Transaction signature: {}", signature);
         println!("📄 Proof account: {}", proof_account.pubkey());
+        println!("🔗 UID: {}", record.uid);
 
         Ok(TransactionResult {
             transaction_id: signature.to_string(),
             block_height: None, // Could fetch this if needed
             confirmation_time: None,
-        })
-    }
-
-    async fn retrieve_record_impl(&self, transaction_id: &str) -> BlockchainResult<Option<ContentRecord>> {
-        // TODO: Implement actual retrieval from Solana
-        // This would involve deserializing account data
-        println!("Retrieving record for transaction: {}", transaction_id);
-        
-        // Placeholder implementation
-        Ok(Some(ContentRecord {
-            uid: "retrieved_uid".into(),
-            created_at: "2025-05-03T12:00:00Z".into(),
-            hash: "retrieved_hash".into(),
-            url: "https://retrieved.example.com".into(),
-        }))
-    }
-
-    async fn health_check_impl(&self) -> BlockchainResult<bool> {
-        match self.client.get_health() {
-            Ok(_) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }
-
-    async fn get_network_info_impl(&self) -> BlockchainResult<NetworkInfo> {
-        let slot = self.client.get_slot()?;
-        
-        Ok(NetworkInfo {
-            chain_id: "solana-localnet".to_string(),
-            block_height: slot,
-            network_name: "Solana Local Validator".to_string(),
         })
     }
 }
@@ -208,18 +194,6 @@ impl SolanaProvider {
 impl BlockchainProvider for SolanaProvider {
     async fn store_record(&self, record: &ContentRecord) -> BlockchainResult<TransactionResult> {
         self.store_record_impl(record).await
-    }
-
-    async fn retrieve_record(&self, transaction_id: &str) -> BlockchainResult<Option<ContentRecord>> {
-        self.retrieve_record_impl(transaction_id).await
-    }
-
-    async fn health_check(&self) -> BlockchainResult<bool> {
-        self.health_check_impl().await
-    }
-
-    async fn get_network_info(&self) -> BlockchainResult<NetworkInfo> {
-        self.get_network_info_impl().await
     }
 }
 

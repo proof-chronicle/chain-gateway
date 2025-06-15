@@ -26,25 +26,10 @@ pub enum ChainType {
     // Add more chains as needed
 }
 
-/// General blockchain interface for content storage and retrieval
+/// Simplified blockchain interface for content storage only
 #[async_trait]
 pub trait BlockchainProvider: Send + Sync {
     /// Store a content record on the blockchain
     async fn store_record(&self, record: &ContentRecord) -> BlockchainResult<TransactionResult>;
-    
-    /// Retrieve a content record by transaction ID
-    async fn retrieve_record(&self, transaction_id: &str) -> BlockchainResult<Option<ContentRecord>>;
-    
-    /// Check if the blockchain connection is healthy
-    async fn health_check(&self) -> BlockchainResult<bool>;
-    
-    /// Get the current network status
-    async fn get_network_info(&self) -> BlockchainResult<NetworkInfo>;
 }
-
-#[derive(Debug)]
-pub struct NetworkInfo {
-    pub chain_id: String,
-    pub block_height: u64,
-    pub network_name: String,
-} 
+ 

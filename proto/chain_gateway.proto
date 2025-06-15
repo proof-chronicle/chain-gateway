@@ -4,10 +4,11 @@ package chain_gateway;
 
 // Reusable record for content entries
 message ContentRecord {
-    string uid = 1;                                // Unique identifier
-    string created_at = 2;      // Creation timestamp
-    string hash = 3;                               // Content hash
-    string url = 4;                                // Original URL
+    string uid = 1;                                // Unique identifier to bind transaction to page version
+    string url = 2;                                // Page URL
+    string content_hash = 3;                       // SHA-256 hash of page content
+    uint64 content_length = 4;                     // Size of original content in bytes
+    uint32 version = 5;                            // Schema version number
 }
 
 // Request to store a content record
@@ -19,23 +20,11 @@ message StoreRequest {
 message StoreResponse {
     bool success = 1;
     string transaction_id = 2;  // On-chain transaction ID
-}
-
-// Request to retrieve a content record by UID
-message RetrieveRequest {
-    string transaction_id = 1;
-}
-
-// Response containing the requested content record
-message RetrieveResponse {
-    ContentRecord record = 1;
+    string account_address = 3; // Solana account address where proof is stored
 }
 
 service ChainGateway {
     // Store a new content record on-chain
     rpc Store(StoreRequest) returns (StoreResponse);
-
-    // Retrieve an existing content record by its transaction_id
-    rpc Retrieve(RetrieveRequest) returns (RetrieveResponse);
 }
 
